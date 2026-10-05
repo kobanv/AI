@@ -5,13 +5,15 @@
   Агент  — модель с руками (Python) и памятью.
 
 Один раунд:
-  1. Самопроверка: карта навыков (домен × уровень), доля решённых задач в каждом.
+  1. Самопроверка на НЕВИДАННЫХ задачах (на них модель никогда не учится): карта навыков.
   2. Выбор фокуса: «зона ближайшего развития» (c·(1−c)), прогресс прошлого раунда,
      любопытство к следующему уровню после освоенного. Освоенное и безнадёжное — реже.
   3. Практика: по каждой задаче несколько попыток (жадно + с температурой: разные пути мысли).
      В опыт попадают только решения, прошедшие проверку мира.
   4. Сон: дообучение на собственном проверенном опыте + повторение того, что уже умеет, + немного языка.
-  5. «Не навреди»: самопроверка на постоянном наборе; если после сна стало хуже — откат и учиться осторожнее.
+  5. «Не навреди»: если после сна на невиданных задачах стало хуже — откат и учиться осторожнее.
+     (Урок прошлой версии: когда модель училась на задачах своей же самопроверки, она «обманывала себя» —
+     самопроверка росла, а экзамен падал. Закон Гудхарта.)
   6. Дневник: что выбрала, почему, сколько получилось, принят ли сон, как изменилась карта навыков.
 
 python -m tkan.selfimprove --run R_recur --rounds 8
@@ -43,11 +45,13 @@ class World:
         self.rng = random.Random(seed)
         self.closed = {t.key for t in T.test_set(n_per_cell=10)}
 
-    def problem(self, domain, level):
-        """Новая открытая задача или None, если все задачи навыка ушли на экзамен (тогда практики нет)."""
+    def problem(self, domain, level, pool="train"):
+        """Новая задача. pool="train" — для практики (из обучающей части мира);
+        pool="heldout" — невиданная задача для честной самопроверки (не экзамен).
+        None, если в этом пуле задач навыка не осталось."""
         for _ in range(3000):
             key, versions, check, tests, tool = T.GENERATORS[domain](self.rng, level)
-            if T.is_test_key(key) or key in self.closed:
+            if key in self.closed or T.is_test_key(key) != (pool == "heldout"):
                 continue
             lang = self.rng.choice(T.LANGS)
             q, a = versions[lang]
@@ -58,12 +62,18 @@ class World:
         return [s for s in SKILLS if self.problem(*s) is not None]
 
     def make_probe(self, k):
-        """Постоянный набор задач для самопроверки. В практику он не попадает: так видно, помог ли сон."""
+        """Постоянный набор НЕВИДАННЫХ задач для самопроверки: на нём модель никогда не учится."""
         probe = {}
         for s in self.skills:
-            probe[s] = [t for t in (self.problem(*s) for _ in range(k)) if t is not None]
-            self.closed |= {t.key for t in probe[s]}
+            tasks = [t for t in (self.problem(*s, pool="heldout") for _ in range(k)) if t is not None]
+            if tasks:
+                probe[s] = tasks
+                self.closed |= {t.key for t in tasks}
         return probe
+
+    def rehearsal_set(self, k):
+        """Обучающие задачи всех навыков: на них модель вспоминает то, что уже умеет."""
+        return {s: [t for t in (self.problem(*s) for _ in range(k)) if t is not None] for s in self.skills}
 
     @staticmethod
     def check(task, out):
@@ -145,7 +155,7 @@ def practice(model, world, skills, r, problems, attempts, temperature):
 
 
 def sleep(model, opt, fresh, replay, mix, steps, bsz, seq, rng):
-    """Консолидация: новый проверенный опыт (40%) + повторение уже умеющегося (50%) + живой язык (10%)."""
+    """Консолидация: новый проверенный опыт (30%) + повторение уже умеющегося (60%) + живой язык (10%)."""
     model.train()
     losses = []
     for _ in range(steps):
@@ -155,7 +165,7 @@ def sleep(model, opt, fresh, replay, mix, steps, bsz, seq, rng):
             if u < 0.1:
                 rows.append(mix.sample_text(rng.choice(["wiki_ru", "wiki_en"]))[: seq + 1])
                 continue
-            pool = fresh if (u < 0.5 or not replay) else replay
+            pool = fresh if (u < 0.4 or not replay) else replay
             buf = bytearray()
             while len(buf) < seq + 1:
                 buf += rng.choice(pool).encode("utf-8")
@@ -197,8 +207,8 @@ def main():
     ap.add_argument("--problems", type=int, default=16)
     ap.add_argument("--attempts", type=int, default=5)
     ap.add_argument("--temperature", type=float, default=0.8)
-    ap.add_argument("--sleep_steps", type=int, default=60)
-    ap.add_argument("--lr", type=float, default=1.5e-4)
+    ap.add_argument("--sleep_steps", type=int, default=40)
+    ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--tol", type=float, default=0.01, help="допустимое падение компетентности после сна")
     ap.add_argument("--exam_n", type=int, default=10)
     ap.add_argument("--threads", type=int, default=2)
@@ -226,20 +236,23 @@ def main():
     open(os.path.join(out_dir, "exam_before.md"), "w").write(E.table(rows0, f"{args.run} до саморазвития"))
 
     probe = world.make_probe(args.assess_k)
-    comp, tool_use, rehearsal = assess(model, probe, args.r)
+    comp, tool_use, _ = assess(model, probe, args.r)
+    # повторение: собственные проверенные решения на обучающих задачах всех навыков (не на самопроверке!)
+    _, _, rehearsal = assess(model, world.rehearsal_set(args.assess_k), args.r)
     replay, prev, lr = [], None, args.lr
     history = []
-    print(f"самопроверка: средняя компетентность {mean(comp):.1%}", flush=True)
+    print(f"самопроверка на невиданных задачах: {mean(comp):.1%}; своих проверенных решений для повторения: "
+          f"{len(rehearsal)}", flush=True)
     for rnd in range(1, args.rounds + 1):
         focus, why = choose_focus(comp, prev, args.focus, rng)
         fresh, stats = practice(model, world, focus, args.r, args.problems, args.attempts, args.temperature)
         before = {k: v.clone() for k, v in model.state_dict().items()}
         loss = sleep(model, opt, fresh, replay + rehearsal, mix, args.sleep_steps, 32, 256, rng) if fresh else float("nan")
-        new_comp, new_tool, new_reh = assess(model, probe, args.r)
+        new_comp, new_tool, _ = assess(model, probe, args.r)
         accepted = mean(new_comp) >= mean(comp) - args.tol
         if accepted:
             replay = (replay + fresh)[-20000:]
-            prev, comp, tool_use, rehearsal = comp, new_comp, new_tool, new_reh
+            prev, comp, tool_use = comp, new_comp, new_tool
             verdict = "принято"
         else:                                   # «не навреди»: сон ухудшил — откат и осторожнее
             model.load_state_dict(before)
