@@ -10,8 +10,9 @@
      любопытство к следующему уровню после освоенного. Освоенное и безнадёжное — реже.
   3. Практика: по каждой задаче несколько попыток (жадно + с температурой: разные пути мысли).
      В опыт попадают только решения, прошедшие проверку мира.
-  4. Сон: дообучение на собственном проверенном опыте + повтор старого опыта и немного живого языка.
-  5. Дневник: что выбрала, почему, сколько получилось, как изменилась карта навыков.
+  4. Сон: дообучение на собственном проверенном опыте + повторение того, что уже умеет, + немного языка.
+  5. «Не навреди»: самопроверка на постоянном наборе; если после сна стало хуже — откат и учиться осторожнее.
+  6. Дневник: что выбрала, почему, сколько получилось, принят ли сон, как изменилась карта навыков.
 
 python -m tkan.selfimprove --run R_recur --rounds 8
 """
@@ -56,6 +57,14 @@ class World:
     def open_skills(self):
         return [s for s in SKILLS if self.problem(*s) is not None]
 
+    def make_probe(self, k):
+        """Постоянный набор задач для самопроверки. В практику он не попадает: так видно, помог ли сон."""
+        probe = {}
+        for s in self.skills:
+            probe[s] = [t for t in (self.problem(*s) for _ in range(k)) if t is not None]
+            self.closed |= {t.key for t in probe[s]}
+        return probe
+
     @staticmethod
     def check(task, out):
         return E.is_correct(task, out)
@@ -66,19 +75,26 @@ def trajectory(task, out):
     return task.prompt + out.split("\n\n")[0] + "\n\n"
 
 
-def assess(model, world, r, k):
+def assess(model, probe, r):
+    """Самопроверка на постоянном наборе: карта навыков + проверенные решения для повторения во сне."""
     agent = ToolAgent(model, r)
-    comp, tool_use = {}, {}
-    for d, l in world.skills:
+    comp, tool_use, rehearsal = {}, {}, []
+    for skill, tasks in probe.items():
         ok = used = 0
-        for _ in range(k):
-            t = world.problem(d, l)
+        for t in tasks:
             out, _ = agent.answer(t.prompt, E.max_new_for(t))
-            ok += world.check(t, out)
+            good = World.check(t, out)
+            ok += good
             used += "<py>" in out
-        comp[(d, l)] = ok / k
-        tool_use[(d, l)] = used / k
-    return comp, tool_use
+            if good:
+                rehearsal.append(trajectory(t, out))
+        comp[skill] = ok / max(1, len(tasks))
+        tool_use[skill] = used / max(1, len(tasks))
+    return comp, tool_use, rehearsal
+
+
+def mean(d):
+    return sum(d.values()) / max(1, len(d))
 
 
 def choose_focus(comp, prev, n, rng):
@@ -129,7 +145,7 @@ def practice(model, world, skills, r, problems, attempts, temperature):
 
 
 def sleep(model, opt, fresh, replay, mix, steps, bsz, seq, rng):
-    """Консолидация: собственный проверенный опыт + повтор старого + немного живого языка."""
+    """Консолидация: новый проверенный опыт (40%) + повторение уже умеющегося (50%) + живой язык (10%)."""
     model.train()
     losses = []
     for _ in range(steps):
@@ -139,7 +155,7 @@ def sleep(model, opt, fresh, replay, mix, steps, bsz, seq, rng):
             if u < 0.1:
                 rows.append(mix.sample_text(rng.choice(["wiki_ru", "wiki_en"]))[: seq + 1])
                 continue
-            pool = fresh if (u < 0.75 or not replay) else replay
+            pool = fresh if (u < 0.5 or not replay) else replay
             buf = bytearray()
             while len(buf) < seq + 1:
                 buf += rng.choice(pool).encode("utf-8")
@@ -181,8 +197,9 @@ def main():
     ap.add_argument("--problems", type=int, default=16)
     ap.add_argument("--attempts", type=int, default=5)
     ap.add_argument("--temperature", type=float, default=0.8)
-    ap.add_argument("--sleep_steps", type=int, default=120)
-    ap.add_argument("--lr", type=float, default=4e-4)
+    ap.add_argument("--sleep_steps", type=int, default=60)
+    ap.add_argument("--lr", type=float, default=1.5e-4)
+    ap.add_argument("--tol", type=float, default=0.01, help="допустимое падение компетентности после сна")
     ap.add_argument("--exam_n", type=int, default=10)
     ap.add_argument("--threads", type=int, default=2)
     ap.add_argument("--seed", type=int, default=0)
@@ -208,36 +225,48 @@ def main():
     print(f"экзамен ДО: ru {acc0[('ALL', 'ru', 'all')]:.1%} en {acc0[('ALL', 'en', 'all')]:.1%}", flush=True)
     open(os.path.join(out_dir, "exam_before.md"), "w").write(E.table(rows0, f"{args.run} до саморазвития"))
 
-    replay, prev = [], None
+    probe = world.make_probe(args.assess_k)
+    comp, tool_use, rehearsal = assess(model, probe, args.r)
+    replay, prev, lr = [], None, args.lr
     history = []
+    print(f"самопроверка: средняя компетентность {mean(comp):.1%}", flush=True)
     for rnd in range(1, args.rounds + 1):
-        comp, tool_use = assess(model, world, args.r, args.assess_k)
         focus, why = choose_focus(comp, prev, args.focus, rng)
         fresh, stats = practice(model, world, focus, args.r, args.problems, args.attempts, args.temperature)
-        loss = sleep(model, opt, fresh, replay, mix, args.sleep_steps, 32, 256, rng) if fresh else float("nan")
-        replay = (replay + fresh)[-20000:]
-        mean_c = sum(comp.values()) / len(comp)
-        rec = {"round": rnd, "min": round((time.time() - t0) / 60, 1), "mean_competence": mean_c,
+        before = {k: v.clone() for k, v in model.state_dict().items()}
+        loss = sleep(model, opt, fresh, replay + rehearsal, mix, args.sleep_steps, 32, 256, rng) if fresh else float("nan")
+        new_comp, new_tool, new_reh = assess(model, probe, args.r)
+        accepted = mean(new_comp) >= mean(comp) - args.tol
+        if accepted:
+            replay = (replay + fresh)[-20000:]
+            prev, comp, tool_use, rehearsal = comp, new_comp, new_tool, new_reh
+            verdict = "принято"
+        else:                                   # «не навреди»: сон ухудшил — откат и осторожнее
+            model.load_state_dict(before)
+            lr *= 0.5
+            opt = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.95), weight_decay=0.0)
+            verdict = f"откат (стало {mean(new_comp):.1%}), шаг обучения → {lr:.1e}"
+        rec = {"round": rnd, "min": round((time.time() - t0) / 60, 1), "mean_competence": mean(comp),
+               "tried_competence": mean(new_comp), "verdict": verdict,
                "competence": {f"{d}/{l}": c for (d, l), c in comp.items()},
                "tool_use": {f"{d}/{l}": u for (d, l), u in tool_use.items() if u > 0},
                "focus": [{"skill": f"{d}/{l}", "why": why[(d, l)], "solved": stats[(d, l)]["solved"]} for d, l in focus],
-               "new_experience": len(fresh), "replay": len(replay), "sleep_loss": loss}
+               "new_experience": len(fresh), "rehearsal": len(rehearsal), "replay": len(replay), "sleep_loss": loss}
         history.append(rec)
         diary.write(json.dumps(rec, ensure_ascii=False) + "\n")
         diary.flush()
-        print(f"раунд {rnd} ({rec['min']} мин): средняя компетентность {mean_c:.1%}; "
+        print(f"раунд {rnd} ({rec['min']} мин): компетентность {mean(comp):.1%} [{verdict}]; "
               f"фокус: {', '.join(f['skill'] + ' — ' + f['why'] for f in rec['focus'])}; "
-              f"новый опыт: {len(fresh)}", flush=True)
-        prev = comp
+              f"новый опыт: {len(fresh)}, повторение: {len(rehearsal)}", flush=True)
 
-    comp, _ = assess(model, world, args.r, args.assess_k)
     rows1, acc1 = exam(model, args.r, args.exam_n)
     print(f"экзамен ПОСЛЕ: ru {acc1[('ALL', 'ru', 'all')]:.1%} en {acc1[('ALL', 'en', 'all')]:.1%}", flush=True)
     open(os.path.join(out_dir, "exam_after.md"), "w").write(E.table(rows1, f"{args.run} после саморазвития"))
     summary = {"before": {k: acc0[("ALL", k, "all")] for k in T.LANGS},
                "after": {k: acc1[("ALL", k, "all")] for k in T.LANGS},
                "competence_start": history[0]["mean_competence"] if history else None,
-               "competence_end": sum(comp.values()) / len(comp),
+               "competence_end": mean(comp),
+               "rounds_accepted": sum(h["verdict"] == "принято" for h in history), "rounds": len(history),
                "final_map": comp_table(comp), "minutes": (time.time() - t0) / 60}
     json.dump(summary, open(os.path.join(out_dir, "summary.json"), "w"), ensure_ascii=False, indent=1)
     torch.save({"cfg": ck["cfg"], "model": model.state_dict(), "step": ck["step"], "bytes": ck["bytes"]},
