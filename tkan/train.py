@@ -51,6 +51,8 @@ def main():
     ap.add_argument("--mix", default="wiki_ru=0.2,wiki_en=0.2,code=0.1,tasks=0.5")
     ap.add_argument("--domains", default=",".join(__import__("tkan.bench.tasks", fromlist=["x"]).DOMAINS))
     ap.add_argument("--levels", default="1,2,3,4")
+    ap.add_argument("--byte_attn", type=int, default=0)
+    ap.add_argument("--inject", default="concat")
     ap.add_argument("--amp", action="store_true", help="смешанная точность на GPU")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
@@ -60,7 +62,8 @@ def main():
     out = os.path.join(RUNS, args.name)
     os.makedirs(out, exist_ok=True)
     cfg = Config(chunking=args.chunking, r_train_max=args.r_max, r_train_min=args.r_min, s0_noise=args.s0_noise,
-                 d_main=args.d_main, d_byte=args.d_byte, n_heads=max(1, args.d_main // 64))
+                 d_main=args.d_main, d_byte=args.d_byte, n_heads=max(1, args.d_main // 64),
+                 byte_attn=args.byte_attn, inject=args.inject)
     model = Tkan(cfg).to(args.device)
     weights = {k: float(v) for k, v in (kv.split("=") for kv in args.mix.split(","))}
     mix = Mixture(args.seq, weights=weights, seed=args.seed, tool_prob=args.tools,

@@ -38,6 +38,9 @@ class Config:
     s0_noise: float = 0.0      # случайное начальное состояние мысли (как в Huginn): ядро учится сходиться
     bptt: int = 2              # градиент течёт через последние bptt циклов
     max_chunks: int = 1024
+    byte_attn: int = 0         # слоёв внимания по байтам в декодере («точный взгляд» для копирования)
+    byte_window: int = 256     # окно этого внимания (байт)
+    inject: str = "concat"     # как мысль смешивается со входом: concat (адаптер) | add (без обхода)
 
 
 class RMSNorm(nn.Module):
@@ -90,9 +93,10 @@ def rope(x, pos):
 
 
 class AttnBlock(nn.Module):
-    def __init__(self, d, n_heads):
+    def __init__(self, d, n_heads, window=None):
         super().__init__()
         self.h = n_heads
+        self.window = window
         self.n1, self.n2 = RMSNorm(d), RMSNorm(d)
         self.qkv = nn.Linear(d, 3 * d, bias=False)
         self.o = nn.Linear(d, d, bias=False)
@@ -103,7 +107,12 @@ class AttnBlock(nn.Module):
         q, k, v = self.qkv(self.n1(x)).view(B, N, 3, self.h, D // self.h).permute(2, 0, 3, 1, 4)
         pos = torch.arange(N, device=x.device)
         q, k = rope(q, pos), rope(k, pos)
-        a = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        if self.window and N > self.window:
+            i = torch.arange(N, device=x.device)
+            mask = (i[None, :] <= i[:, None]) & (i[:, None] - i[None, :] < self.window)
+            a = F.scaled_dot_product_attention(q, k, v, attn_mask=mask)
+        else:
+            a = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         x = x + self.o(a.transpose(1, 2).reshape(B, N, D))
         return x + self.mlp(self.n2(x))
 
@@ -140,6 +149,8 @@ class Tkan(nn.Module):
         self.core_norm = RMSNorm(dm)
         self.coda = nn.ModuleList([AttnBlock(dm, cfg.n_heads) for _ in range(cfg.coda_layers)])
         self.up = nn.Linear(dm, db, bias=False)
+        self.byte_attn = nn.ModuleList([AttnBlock(db, max(1, db // 64), window=cfg.byte_window)
+                                        for _ in range(cfg.byte_attn)])
         self.decoder = nn.ModuleList([ConvBlock(db, cfg.conv_kernel) for _ in range(cfg.dec_layers)])
         self.out_norm = RMSNorm(db)
         self.head = nn.Linear(db, 256, bias=False)
@@ -178,7 +189,10 @@ class Tkan(nn.Module):
         for i in range(r):
             grad = torch.is_grad_enabled() and i >= r - bptt
             with torch.set_grad_enabled(grad):
-                s = self.adapter(torch.cat([self.core_norm(s), e], -1))
+                if self.cfg.inject == "add":
+                    s = s + e if i else e      # мысль нельзя обойти: она всегда в потоке
+                else:
+                    s = self.adapter(torch.cat([self.core_norm(s), e], -1))
                 for blk in self.core:
                     s = blk(s)
         x = self.core_norm(s)
@@ -216,6 +230,8 @@ class Tkan(nn.Module):
             c = torch.where(b, p, 1 - p)
             zu = zu * (c + (1 - c).detach()).unsqueeze(-1)            # STE: вперёд 1, назад c
         x = h + self.up(zu)
+        for blk in self.byte_attn:      # точный взгляд назад по байтам: копирование чисел, имён, кода
+            x = blk(x)
         for blk in self.decoder:
             x = blk(x)
         logits = self.head(self.out_norm(x))

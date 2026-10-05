@@ -48,3 +48,15 @@ def test_ema_scan_matches_loop():
         prev = P[:, j:j + 1] * z[:, j] + (1 - P[:, j:j + 1]) * prev
         outs.append(prev)
     assert torch.allclose(ema_scan(z, P), torch.stack(outs, 1), atol=1e-4)
+
+
+def test_causal_with_byte_attention_and_add_injection():
+    torch.manual_seed(0)
+    m = Tkan(Config(d_byte=64, d_main=64, n_heads=2, byte_attn=1, byte_window=16, inject="add")).eval()
+    x = torch.randint(0, 256, (2, 96))
+    y = x.clone()
+    y[:, 51:] = torch.randint(0, 256, (2, 45))
+    with torch.no_grad():
+        la, _, _ = m(x, r=3)
+        lb, _, _ = m(y, r=3)
+    assert torch.allclose(la[:, :51], lb[:, :51], atol=1e-5)
