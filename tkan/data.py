@@ -40,7 +40,7 @@ def python_corpus(limit=16 * 1024 * 1024):
 
 
 class Mixture:
-    def __init__(self, seq_len, weights=None, seed=0, tool_prob=0.0):
+    def __init__(self, seq_len, weights=None, seed=0, tool_prob=0.0, domains=T.DOMAINS, levels=T.TRAIN_LEVELS):
         self.T = seq_len
         self.tool_prob = tool_prob
         self.rng = random.Random(seed)
@@ -50,7 +50,8 @@ class Mixture:
             "code": _load(python_corpus()),
         }
         self.weights = weights or {"wiki_ru": 0.2, "wiki_en": 0.2, "code": 0.1, "tasks": 0.5}
-        self.tasks = T.train_stream(seed)
+        self.weights = {k: v for k, v in self.weights.items() if v > 0}
+        self.tasks = T.train_stream(seed, levels=levels, domains=domains)
 
     def split(self, name, val):
         a = self.src[name]

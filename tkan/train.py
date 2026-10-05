@@ -46,6 +46,11 @@ def main():
     ap.add_argument("--d_byte", type=int, default=192)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--tools", type=float, default=0.0, help="доля демонстраций с инструментом")
+    ap.add_argument("--r_min", type=int, default=1)
+    ap.add_argument("--s0_noise", type=float, default=0.0)
+    ap.add_argument("--mix", default="wiki_ru=0.2,wiki_en=0.2,code=0.1,tasks=0.5")
+    ap.add_argument("--domains", default=",".join(__import__("tkan.bench.tasks", fromlist=["x"]).DOMAINS))
+    ap.add_argument("--levels", default="1,2,3,4")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
 
@@ -53,9 +58,12 @@ def main():
     torch.set_num_threads(args.threads)
     out = os.path.join(RUNS, args.name)
     os.makedirs(out, exist_ok=True)
-    cfg = Config(chunking=args.chunking, r_train_max=args.r_max, d_main=args.d_main, d_byte=args.d_byte)
+    cfg = Config(chunking=args.chunking, r_train_max=args.r_max, r_train_min=args.r_min, s0_noise=args.s0_noise,
+                 d_main=args.d_main, d_byte=args.d_byte)
     model = Tkan(cfg).to(args.device)
-    mix = Mixture(args.seq, seed=args.seed, tool_prob=args.tools)
+    weights = {k: float(v) for k, v in (kv.split("=") for kv in args.mix.split(","))}
+    mix = Mixture(args.seq, weights=weights, seed=args.seed, tool_prob=args.tools,
+                  domains=tuple(args.domains.split(",")), levels=tuple(int(x) for x in args.levels.split(",")))
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9, 0.95), weight_decay=0.1)
     print(f"параметров: {model.n_params() / 1e6:.2f}M, нарезка: {cfg.chunking}", flush=True)
 
@@ -83,7 +91,7 @@ def main():
         if step % 50 == 0:
             rec = {"step": step, "min": round(elapsed / 60, 1), "bytes": seen, "ce_bits": ce.item() / math.log(2),
                    "bytes_per_chunk": x.numel() / max(1, int(b.sum())), "lr": lr}
-            if step % 500 == 0:
+            if step % 500 == 0 and args.mix.split(",")[0].split("=")[1] != "0":
                 for name in ("wiki_ru", "wiki_en", "code"):
                     rec[f"val_{name}"], rec[f"bpc_{name}"] = bits_per_byte(model, mix, name, n=4)
             print(json.dumps(rec, ensure_ascii=False), flush=True)

@@ -33,7 +33,9 @@ class Config:
     chunking: str = "learned"  # learned | fixed
     target_ratio: float = 4.0  # байт на чанк (в среднем)
     ratio_loss_w: float = 0.03
-    r_train_max: int = 6       # при обучении r ~ U{1..r_train_max}
+    r_train_max: int = 6       # при обучении r ~ U{r_train_min..r_train_max}
+    r_train_min: int = 1
+    s0_noise: float = 0.0      # случайное начальное состояние мысли (как в Huginn): ядро учится сходиться
     bptt: int = 2              # градиент течёт через последние bptt циклов
     max_chunks: int = 1024
 
@@ -172,7 +174,7 @@ class Tkan(nn.Module):
         for blk in self.prelude:
             x = blk(x)
         e = x
-        s = torch.zeros_like(e)
+        s = torch.randn_like(e) * self.cfg.s0_noise if self.cfg.s0_noise else torch.zeros_like(e)
         for i in range(r):
             grad = torch.is_grad_enabled() and i >= r - bptt
             with torch.set_grad_enabled(grad):
@@ -202,7 +204,7 @@ class Tkan(nn.Module):
         P = h.new_zeros(B, n_chunks).index_put((bi, ci), p[bi, ti])
 
         if r is None:
-            r = int(torch.randint(1, cfg.r_train_max + 1, (1,))) if self.training else cfg.r_train_max
+            r = int(torch.randint(cfg.r_train_min, cfg.r_train_max + 1, (1,))) if self.training else cfg.r_train_max
         z = self.think(z, r, cfg.bptt if self.training else r)
 
         # сглаживание (EMA по чанкам): даёт роутеру градиент, куда сдвинуть границы
