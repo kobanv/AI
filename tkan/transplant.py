@@ -35,6 +35,7 @@ from .train import RUNS
 TEACHER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "qwen3-0.6b")
 OUT = os.path.join(RUNS, "T_transplant")
 END = 256  # символ «конец куска» в голосе
+DEV = "cuda" if torch.cuda.is_available() else "cpu"
 MAX_CHUNK = 24
 
 
@@ -56,7 +57,7 @@ class Teacher:
     def __init__(self, path=TEACHER):
         from transformers import AutoModelForCausalLM, AutoTokenizer
         self.tok = AutoTokenizer.from_pretrained(path)
-        self.lm = AutoModelForCausalLM.from_pretrained(path, dtype=torch.float32).eval()
+        self.lm = AutoModelForCausalLM.from_pretrained(path, dtype=torch.float32).to(DEV).eval()
         for p in self.lm.parameters():
             p.requires_grad_(False)
         self.E = self.lm.get_input_embeddings().weight          # (V, 1024)
@@ -190,7 +191,7 @@ def batch(gen, bsz):
 def train_eye(args):
     torch.set_num_threads(args.threads)
     teacher = Teacher()
-    eye = Eye(teacher.d)
+    eye = Eye(teacher.d).to(DEV)
     mix = Mixture(512, seed=11)
     gen = samples(mix, teacher)
     dense = [p for n, p in eye.named_parameters() if not n.startswith("ngram")]
@@ -201,9 +202,10 @@ def train_eye(args):
     t0, step, log = time.time(), 0, open(os.path.join(OUT, "eye_log.jsonl"), "w")
     while time.time() - t0 < args.minutes * 60:
         rows, x, is_end = batch(gen, args.bsz)
+        x, is_end = x.to(DEV), is_end.to(DEV)
         h = eye(x)
         bi, ti = is_end.nonzero(as_tuple=True)
-        ids = torch.tensor([i for r in rows for i in r[0]])
+        ids = torch.tensor([i for r in rows for i in r[0]], device=DEV)
         pred = eye.out(h[bi, ti])
         tgt = E[ids]
         rel = ((pred - tgt) ** 2).sum(-1) / (tgt ** 2).sum(-1).clamp_min(1e-6)
@@ -258,7 +260,7 @@ def chunk_targets(pieces):
 def train_voice(args):
     torch.set_num_threads(args.threads)
     teacher = Teacher()
-    voice = Voice(teacher.d)
+    voice = Voice(teacher.d).to(DEV)
     mix = Mixture(512, seed=12)
     gen = samples(mix, teacher)
     opt = torch.optim.AdamW(voice.parameters(), lr=args.lr, weight_decay=0.0)
@@ -267,11 +269,12 @@ def train_voice(args):
         rows = [next(gen) for _ in range(args.bsz)]
         H, pieces = [], []
         for ids, _, _ in rows:          # мысль ядра в позиции j предсказывает кусок j+1
-            h = teacher.core(teacher.E[torch.tensor(ids)][None])[0]
+            h = teacher.core(teacher.E[torch.tensor(ids, device=DEV)][None])[0]
             H.append(h[:-1])
             pieces += [teacher.token_bytes(i) for i in ids[1:]]
         H = torch.cat(H)
         prev, tgt = chunk_targets(pieces)
+        prev, tgt = prev.to(DEV), tgt.to(DEV)
         logits = voice(H, prev)
         loss = F.cross_entropy(logits.reshape(-1, 257), tgt.reshape(-1), ignore_index=-100)
         loss_sum = float(loss) * int((tgt != -100).sum())
@@ -303,7 +306,7 @@ class TkanT:
     @torch.no_grad()
     def read(self, raw: bytes):
         """Глаз читает байты, голова сама ставит границы кусков, ядро думает."""
-        x = torch.tensor([list(raw)])
+        x = torch.tensor([list(raw)], device=DEV)
         h = self.eye(x)
         ends = (self.eye.boundary_logits(h)[0] > 0).nonzero().flatten().tolist()
         if not ends or ends[-1] != len(raw) - 1:
@@ -315,7 +318,7 @@ class TkanT:
     def speak_chunk(self, thought):
         out = []
         for _ in range(MAX_CHUNK):
-            prev = torch.tensor([out], dtype=torch.long).reshape(1, len(out))
+            prev = torch.tensor([out], dtype=torch.long, device=DEV).reshape(1, len(out))
             logits = self.voice(thought[None], prev)[0, -1]
             b = int(logits.argmax())
             if b == END:
@@ -335,7 +338,7 @@ class TkanT:
                 break
             # глаз дочитывает новый кусок (причинно: его вектор зависит от всего прочитанного)
             full = prompt + out
-            hh = self.eye(torch.tensor([list(full)]))
+            hh = self.eye(torch.tensor([list(full)], device=DEV))
             vec = torch.cat([vec, self.eye.out(hh[0, -1:])], 0)
         return out.split(stop)[0] + (stop if stop in out else b""), 1.0
 
@@ -348,9 +351,9 @@ class TkanT:
 def evaluate(args):
     torch.set_num_threads(args.threads)
     teacher = Teacher()
-    eye, voice = Eye(teacher.d), Voice(teacher.d)
-    eye.load_state_dict(torch.load(os.path.join(OUT, "eye.pt")))
-    voice.load_state_dict(torch.load(os.path.join(OUT, "voice.pt")))
+    eye, voice = Eye(teacher.d).to(DEV), Voice(teacher.d).to(DEV)
+    eye.load_state_dict(torch.load(os.path.join(OUT, "eye.pt"), map_location=DEV))
+    voice.load_state_dict(torch.load(os.path.join(OUT, "voice.pt"), map_location=DEV))
     eye.eval()
     voice.eval()
     mix = Mixture(512, seed=999)
@@ -366,15 +369,16 @@ def evaluate(args):
             if not s:
                 continue
             ids, b, ends = s
-            ids_t = torch.tensor(ids)
+            ids_t = torch.tensor(ids, device=DEV)
             lt = teacher.logits(teacher.core(teacher.E[ids_t][None]))[0, :-1]
-            h = eye(torch.tensor([list(b)]))
+            h = eye(torch.tensor([list(b)], device=DEV))
             le = teacher.logits(teacher.core(eye.out(h[0, ends])[None]))[0, :-1]
             tot_t += float(F.cross_entropy(lt, ids_t[1:], reduction="sum"))
             tot_e += float(F.cross_entropy(le, ids_t[1:], reduction="sum"))
             # байтовая речь целиком: глаз → ядро → голос
             He = teacher.core(eye.out(h[0, ends])[None])[0, :-1]
             prev, tgt = chunk_targets([teacher.token_bytes(i) for i in ids[1:]])
+            prev, tgt = prev.to(DEV), tgt.to(DEV)
             lv = voice(He, prev)
             tot_v += float(F.cross_entropy(lv.reshape(-1, 257), tgt.reshape(-1), ignore_index=-100, reduction="sum"))
             n_bytes += len(b) - len(teacher.token_bytes(ids[0]))

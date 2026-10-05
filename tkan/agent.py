@@ -29,20 +29,26 @@ def run_python(code, timeout=2.0):
 
 
 class ToolAgent:
-    def __init__(self, model, r, max_calls=3):
-        self.model, self.r, self.max_calls = model, r, max_calls
+    def __init__(self, model, r, max_calls=3, temperature=0.0):
+        self.model, self.r, self.max_calls, self.temperature = model, r, max_calls, temperature
         self.calls = 0
 
     def answer(self, prompt, max_new):
         ctx, out, conf = prompt.encode("utf-8"), b"", 1.0
-        for _ in range(self.max_calls + 1):
-            piece, c = self.model.generate(ctx + out, max_new=max_new + 200, r=self.r, stop=(b"</py>", b"\n\n"))
+        budget, extended = max_new, False
+        for _ in range(self.max_calls + 2):
+            piece, c = self.model.generate(ctx + out, max_new=budget, r=self.r, stop=(b"</py>", b"\n\n"),
+                                           temperature=self.temperature)
             out += piece
             conf *= c
             if out.endswith(b"</py>") and b"<py>" in out:
                 code = out.rsplit(b"<py>", 1)[1][:-len(b"</py>")].decode("utf-8", errors="replace")
                 self.calls += 1
                 out += f"<out>{run_python(code)}</out>".encode("utf-8")
+                budget = max_new
+                continue
+            if b"<py>" in out.rsplit(b"</py>", 1)[-1] and len(piece) == budget and not extended:
+                budget, extended = 200, True      # программа длиннее ответа — даём дописать
                 continue
             break
         return out.decode("utf-8", errors="replace"), conf

@@ -234,8 +234,8 @@ class Tkan(nn.Module):
 
     # ------------------------------------------------------------ генерация
     @torch.no_grad()
-    def generate(self, prompt: bytes, max_new=32, r=None, stop=(b"\n\n",)):
-        """Жадная генерация байт за байтом. Возвращает (байты, вероятность ответа)."""
+    def generate(self, prompt: bytes, max_new=32, r=None, stop=(b"\n\n",), temperature=0.0, gen=None):
+        """Генерация байт за байтом (жадная или с температурой). Возвращает (байты, вероятность ответа)."""
         stop = (stop,) if isinstance(stop, bytes) else stop
         self.eval()
         seq = list(prompt)
@@ -245,7 +245,10 @@ class Tkan(nn.Module):
             x = torch.tensor([seq[-2048:]], dtype=torch.long, device=dev)
             logits, _, _ = self(x, r=r)
             lp = F.log_softmax(logits[0, -1], -1)
-            nxt = int(lp.argmax())
+            if temperature > 0:
+                nxt = int(torch.multinomial(F.softmax(logits[0, -1] / temperature, -1), 1, generator=gen))
+            else:
+                nxt = int(lp.argmax())
             logp += float(lp[nxt])
             seq.append(nxt)
             out.append(nxt)

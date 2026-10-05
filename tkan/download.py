@@ -59,8 +59,24 @@ def corpus(lang):
     return out
 
 
+TEACHER_FILES = ["config.json", "generation_config.json", "merges.txt", "tokenizer.json", "tokenizer_config.json",
+                 "vocab.json", "LICENSE", "model.safetensors"]
+
+
+def teacher(repo="Qwen/Qwen3-0.6B", name="qwen3-0.6b"):
+    """Ядро-донор для пересадки знаний (Apache-2.0)."""
+    out = os.path.join(ROOT, name)
+    os.makedirs(out, exist_ok=True)
+    for f in TEACHER_FILES:
+        fetch(f"https://huggingface.co/{repo}/resolve/main/{f}", os.path.join(out, f))
+    return out
+
+
 def main():
+    import sys
     os.makedirs(ROOT, exist_ok=True)
+    if "--teacher" in sys.argv:
+        teacher()
     for name, url in BENCH.items():
         fetch(url, os.path.join(ROOT, name))
     with gzip.open(os.path.join(ROOT, "humaneval.jsonl.gz"), "rt") as f:

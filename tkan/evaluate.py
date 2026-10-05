@@ -40,16 +40,17 @@ class Agent:
         return out.decode("utf-8", errors="replace"), conf
 
 
-def load(run):
+def load(run, device=None):
+    device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     ck = torch.load(os.path.join(RUNS, run, "model.pt"), map_location="cpu")
     model = Tkan(Config(**ck["cfg"]))
     model.load_state_dict(ck["model"])
-    return model.eval(), ck
+    return model.to(device).eval(), ck
 
 
 @torch.no_grad()
 def segment(model, text):
-    x = torch.tensor([list(text.encode("utf-8"))])
+    x = torch.tensor([list(text.encode("utf-8"))], device=model.head.weight.device)
     _, b, _ = model(x, r=model.cfg.r_train_max)
     raw = text.encode("utf-8")
     parts, cur = [], bytearray()
