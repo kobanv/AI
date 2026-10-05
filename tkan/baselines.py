@@ -18,11 +18,10 @@ from .bench import tasks as T
 from .train import RUNS
 
 
-class HFAgent:
-    def __init__(self, path, shots=3):
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        self.tok = AutoTokenizer.from_pretrained(path)
-        self.model = AutoModelForCausalLM.from_pretrained(path, torch_dtype=torch.float32).eval()
+class FewShot:
+    """3 примера формата из обучающей части того же домена и языка (одинаково для всех эталонов)."""
+
+    def __init__(self, shots=3):
         self.shots = {}
         stream = T.train_stream(seed=4242)
         need = {(d, l): shots for d in T.DOMAINS for l in T.LANGS}
@@ -37,6 +36,14 @@ class HFAgent:
         lang = "ru" if prompt.startswith("Вопрос") else "en"
         dom = self.current or "math"
         return "".join(self.shots.get((dom, lang), [])) + prompt
+
+
+class HFAgent(FewShot):
+    def __init__(self, path, shots=3):
+        super().__init__(shots)
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        self.tok = AutoTokenizer.from_pretrained(path)
+        self.model = AutoModelForCausalLM.from_pretrained(path, dtype=torch.float32).eval()
 
     @torch.no_grad()
     def answer(self, prompt, max_new):

@@ -396,15 +396,46 @@ def evaluate(args):
     json.dump(rep, open(os.path.join(OUT, "eval.json"), "w"), ensure_ascii=False, indent=1)
 
 
+@torch.no_grad()
+def exam(args):
+    """Экзамен «Ткани-Т» с теми же 3 примерами, что у эталона Qwen: то же ядро, но глаза и голос — байтовые."""
+    from .baselines import FewShot
+    from .bench import exam as E
+    from .bench import tasks as T
+    torch.set_num_threads(args.threads)
+    teacher = Teacher()
+    eye, voice = Eye(teacher.d).to(DEV), Voice(teacher.d).to(DEV)
+    eye.load_state_dict(torch.load(os.path.join(OUT, "eye.pt"), map_location=DEV))
+    voice.load_state_dict(torch.load(os.path.join(OUT, "voice.pt"), map_location=DEV))
+    organism = TkanT(teacher, eye, voice)
+    shots = FewShot()
+
+    class Agent:
+        def answer(self, prompt, max_new):
+            return organism.answer(shots.prefix(prompt), max_new)
+
+    rows, t0 = [], time.time()
+    for t in T.test_set(n_per_cell=args.n):
+        shots.current = t.domain
+        rows += E.run(Agent(), [t])
+    with open(os.path.join(OUT, "exam.jsonl"), "w") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    md = E.table(rows, f"Ткань-Т (байты ↔ ядро Qwen3-0.6B, 3-shot), {time.time() - t0:.0f} с")
+    open(os.path.join(OUT, "exam.md"), "w").write(md)
+    print(md, flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("stage", choices=["eye", "voice", "eval"])
+    ap.add_argument("stage", choices=["eye", "voice", "eval", "exam"])
     ap.add_argument("--minutes", type=float, default=60)
     ap.add_argument("--bsz", type=int, default=8)
     ap.add_argument("--lr", type=float, default=2e-3)
     ap.add_argument("--threads", type=int, default=2)
+    ap.add_argument("--n", type=int, default=10)
     args = ap.parse_args()
-    {"eye": train_eye, "voice": train_voice, "eval": evaluate}[args.stage](args)
+    {"eye": train_eye, "voice": train_voice, "eval": evaluate, "exam": exam}[args.stage](args)
 
 
 if __name__ == "__main__":
