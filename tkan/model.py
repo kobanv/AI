@@ -268,6 +268,6 @@ class Tkan(nn.Module):
             logp += float(lp[nxt])
             seq.append(nxt)
             out.append(nxt)
-            if any(bytes(out[-len(st):]) == st for st in stop):
+            if any(bytes(seq[-len(st):]) == st for st in stop):   # стоп может начаться ещё в промпте
                 break
         return bytes(out), math.exp(logp)

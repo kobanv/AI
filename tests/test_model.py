@@ -60,3 +60,18 @@ def test_causal_with_byte_attention_and_add_injection():
         la, _, _ = m(x, r=3)
         lb, _, _ = m(y, r=3)
     assert torch.allclose(la[:, :51], lb[:, :51], atol=1e-5)
+
+
+def test_generate_stops_when_stop_sequence_straddles_prompt():
+    """Если промпт кончается на «</p», а модель дописывает «y>», генерация должна остановиться."""
+    m = Tkan(Config(d_byte=64, d_main=64, n_heads=2))
+    script = iter(b"y>XXXXXXXX")
+
+    def fake_forward(x, r=None):
+        logits = torch.full((1, x.size(1), 256), -1e9)
+        logits[0, -1, next(script)] = 0.0
+        return logits, None, None
+
+    m.forward = fake_forward
+    out, _ = m.generate(b"<py>print(1)</p", max_new=8, stop=(b"</py>", b"\n\n"))
+    assert out == b"y>"
