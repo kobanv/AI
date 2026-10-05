@@ -1,5 +1,6 @@
 data/
 runs/
+runs_*.log
 __pycache__/
 *.pyc
 *.pt

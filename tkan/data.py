@@ -2,7 +2,8 @@
 
   wiki_ru / wiki_en — живой язык (Википедия), последние 2 МБ каждого языка — валидация
   code              — исходники стандартной библиотеки Python (настоящий код)
-  tasks             — задачи-упражнения (учитель), без тестовых ключей и без уровня 5
+  tasks             — задачи-упражнения (учитель), без тестовых ключей и без уровня 5;
+                      с вероятностью tool_prob учитель показывает решение «руками» (через Python)
 """
 import glob
 import os
@@ -39,8 +40,9 @@ def python_corpus(limit=16 * 1024 * 1024):
 
 
 class Mixture:
-    def __init__(self, seq_len, weights=None, seed=0):
+    def __init__(self, seq_len, weights=None, seed=0, tool_prob=0.0):
         self.T = seq_len
+        self.tool_prob = tool_prob
         self.rng = random.Random(seed)
         self.src = {
             "wiki_ru": _load(os.path.join(DATA, "wiki_ru.txt")),
@@ -62,7 +64,9 @@ class Mixture:
     def sample_tasks(self):
         buf = bytearray()
         while len(buf) < self.T + 1:
-            buf += next(self.tasks).text.encode("utf-8")
+            t = next(self.tasks)
+            use_tool = t.tool is not None and self.rng.random() < self.tool_prob
+            buf += (t.tool_text if use_tool else t.text).encode("utf-8")
         return np.frombuffer(bytes(buf[:self.T + 1]), dtype=np.uint8)
 
     def batch(self, bsz):

@@ -9,6 +9,7 @@ import time
 
 import torch
 
+from .agent import ToolAgent
 from .bench import exam as E
 from .bench import tasks as T
 from .data import Mixture
@@ -68,6 +69,8 @@ def main():
     ap.add_argument("--n", type=int, default=10, help="задач на ячейку домен×уровень")
     ap.add_argument("--real", type=int, default=10, help="задач MGSM на язык")
     ap.add_argument("--threads", type=int, default=4)
+    ap.add_argument("--tools", action="store_true", help="разрешить модели запускать Python")
+    ap.add_argument("--skip_bpb", action="store_true")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
 
@@ -78,7 +81,7 @@ def main():
 
     # язык: bits-per-byte на отложенной Википедии и коде при разном r
     report["bpb"] = {}
-    for r in sorted(set([1, model.cfg.r_train_max] + args.r)):
+    for r in ([] if args.skip_bpb else sorted(set([1, model.cfg.r_train_max] + args.r))):
         report["bpb"][r] = {name: bits_per_byte(model, mix, name, n=8, r=r) for name in ("wiki_ru", "wiki_en", "code")}
         print("bpb r=", r, report["bpb"][r], flush=True)
 
@@ -90,21 +93,23 @@ def main():
     # экзамен при разном числе циклов мысли
     tasks = T.test_set(n_per_cell=args.n)
     report["exam"] = {}
+    tag = "_tools" if args.tools else ""
     for r in args.r:
         t0 = time.time()
-        rows = E.run(Agent(model, r), tasks, log_path=os.path.join(out_dir, f"exam_r{r}.jsonl"))
+        agent = ToolAgent(model, r) if args.tools else Agent(model, r)
+        rows = E.run(agent, tasks, log_path=os.path.join(out_dir, f"exam{tag}_r{r}.jsonl"))
         acc, cal = E.summarize(rows)
         report["exam"][r] = {"acc": {"|".join(map(str, k)): v for k, v in acc.items()}, "ece": cal}
         print(f"r={r}: всего {100 * acc[('ALL', 'both', 'all')]:.1f}%  ru {100 * acc[('ALL', 'ru', 'all')]:.1f}%  "
               f"en {100 * acc[('ALL', 'en', 'all')]:.1f}%  ECE {cal:.3f}  ({time.time() - t0:.0f} с)", flush=True)
-        with open(os.path.join(out_dir, f"exam_r{r}.md"), "w") as f:
+        with open(os.path.join(out_dir, f"exam{tag}_r{r}.md"), "w") as f:
             f.write(E.table(rows, f"{args.run}, r={r}"))
 
     # реальный бенчмарк (честно: на таком масштабе ожидаем ~0)
     if args.real:
         best_r = max(args.r, key=lambda r: report["exam"][r]["acc"]["ALL|both|all"])
         real = T.load_mgsm("ru", args.real) + T.load_mgsm("en", args.real)
-        rows = E.run(Agent(model, best_r), real)
+        rows = E.run(ToolAgent(model, best_r) if args.tools else Agent(model, best_r), real)
         acc, _ = E.summarize(rows)
         report["mgsm"] = {"r": best_r, "ru": acc.get(("ALL", "ru", "all")), "en": acc.get(("ALL", "en", "all")),
                           "sample": rows[0]["out"][:200]}
@@ -117,7 +122,7 @@ def main():
         report["samples"][p] = out.decode("utf-8", errors="replace")
         print("----", p, "\n", report["samples"][p], flush=True)
 
-    json.dump(report, open(os.path.join(out_dir, "report.json"), "w"), ensure_ascii=False, indent=1)
+    json.dump(report, open(os.path.join(out_dir, f"report{tag}.json"), "w"), ensure_ascii=False, indent=1)
 
 
 if __name__ == "__main__":

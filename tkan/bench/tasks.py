@@ -41,6 +41,7 @@ class Task:
     key: str
     check: str = "exact"          # exact | number | code | humaneval
     tests: list = field(default_factory=list)
+    tool: str = None              # программа, которой учитель решил бы задачу «руками»
 
     @property
     def prompt(self):
@@ -50,6 +51,13 @@ class Task:
     def text(self):
         """Полный пример для обучения: вопрос, ответ, пустая строка-разделитель."""
         return f"{self.prompt} {self.answer}\n\n"
+
+    @property
+    def tool_text(self):
+        """Пример с инструментом: модель пишет программу, исполнитель отвечает, модель делает вывод."""
+        if not self.tool:
+            return self.text
+        return f"{self.prompt} <py>{self.tool}</py><out>{self.answer}</out> {self.answer}\n\n"
 
 
 def is_test_key(key):
@@ -79,13 +87,14 @@ PEOPLE = [
     ("Петя", "Пети", "m", "Peter"), ("Ваня", "Вани", "m", "John"),
     ("Дима", "Димы", "m", "Dima"), ("Саша", "Саши", "m", "Alex"),
 ]
+# (им. ед., род. ед., род. мн., вин. ед.), род существительного; английские формы
 OBJECTS = [
-    (("яблоко", "яблока", "яблок"), ("apple", "apples")),
-    (("книга", "книги", "книг"), ("book", "books")),
-    (("конфета", "конфеты", "конфет"), ("candy", "candies")),
-    (("марка", "марки", "марок"), ("stamp", "stamps")),
-    (("карандаш", "карандаша", "карандашей"), ("pencil", "pencils")),
-    (("мяч", "мяча", "мячей"), ("ball", "balls")),
+    (("яблоко", "яблока", "яблок", "яблоко"), ("apple", "apples"), "n"),
+    (("книга", "книги", "книг", "книгу"), ("book", "books"), "f"),
+    (("конфета", "конфеты", "конфет", "конфету"), ("candy", "candies"), "f"),
+    (("марка", "марки", "марок", "марку"), ("stamp", "stamps"), "f"),
+    (("карандаш", "карандаша", "карандашей", "карандаш"), ("pencil", "pencils"), "m"),
+    (("мяч", "мяча", "мячей", "мяч"), ("ball", "balls"), "m"),
 ]
 BOX_RU = ("коробка", "коробки", "коробок")
 BOX_EN = ("box", "boxes")
@@ -98,8 +107,24 @@ def ru_verb(v, g):
     return VERB_RU[v][0 if g == "m" else 1]
 
 
+def ru_count(n, forms, case="nom"):
+    """«5 яблок», «21 конфета»; в винительном: «купила 21 конфету»."""
+    w = ru_plural(n, forms[:3])
+    if case == "acc" and w == forms[0]:
+        w = forms[3]
+    return f"{n} {w}"
+
+
+def ru_had(n, forms, gender):
+    """«было 5 яблок», но «была 21 конфета», «был 1 мяч»."""
+    if ru_plural(n, forms[:3]) == forms[0]:
+        return {"m": "был", "f": "была", "n": "было"}[gender]
+    return "было"
+
+
 # ---------------------------------------------------------------- генераторы
-# Каждый генератор: (rng, level) -> (key, {lang: (question, answer)}, check, tests)
+# Каждый генератор: (rng, level) -> (key, {lang: (question, answer)}, check, tests, tool)
+# tool — программа, которой задачу можно решить «руками» (None, если инструмент не подходит)
 
 def gen_math(rng, level):
     if level == 1:
@@ -118,18 +143,21 @@ def gen_math(rng, level):
     sym = {"+": "+", "-": "-", "*": "*"}[op]
     q = {"ru": f"Сколько будет {a} {sym} {b}?", "en": f"What is {a} {sym} {b}?"}
     key = f"math|{level}|{a}{op}{b}"
-    return key, {l: (q[l], str(res)) for l in LANGS}, "number", []
+    return key, {l: (q[l], str(res)) for l in LANGS}, "number", [], f"print({a} {sym} {b})"
 
 
 def gen_word(rng, level):
     pi = rng.randrange(len(PEOPLE))
     nom, gen, g, en_name = PEOPLE[pi]
     oi = rng.randrange(len(OBJECTS))
-    ru_o, en_o = OBJECTS[oi]
+    ru_o, en_o, og = OBJECTS[oi]
     P_ru, P_en = PRON_RU[g], PRON_EN[g]
 
-    def ro(n):
-        return f"{n} {ru_plural(n, ru_o)}"
+    def ro(n, case="acc"):
+        return ru_count(n, ru_o, case)
+
+    def had(n):
+        return f"{ru_had(n, ru_o, og)} {ro(n, 'nom')}"
 
     def eo(n):
         return f"{n} {en_plural(n, en_o)}"
@@ -137,51 +165,51 @@ def gen_word(rng, level):
     if level == 1:
         a, b = rng.randint(1, 20), rng.randint(1, 20)
         res = a + b
-        ru = (f"У {gen} было {ro(a)}. {P_ru} {ru_verb('buy', g)} ещё {ro(b)}. "
+        ru = (f"У {gen} {had(a)}. {P_ru} {ru_verb('buy', g)} ещё {ro(b)}. "
               f"Сколько {ru_o[2]} стало у {gen}?")
         en = (f"{en_name} had {eo(a)}. {P_en} bought {eo(b)} more. "
               f"How many {en_o[1]} does {en_name} have now?")
-        params = (a, b)
+        params, expr = (a, b), f"print({a} + {b})"
     elif level == 2:
         a = rng.randint(5, 40)
         b = rng.randint(1, a)
         res = a - b
-        ru = (f"У {gen} было {ro(a)}. {P_ru} {ru_verb('give', g)} другу {ro(b)}. "
+        ru = (f"У {gen} {had(a)}. {P_ru} {ru_verb('give', g)} другу {ro(b)}. "
               f"Сколько {ru_o[2]} осталось у {gen}?")
         en = (f"{en_name} had {eo(a)}. {P_en} gave {eo(b)} to a friend. "
               f"How many {en_o[1]} does {en_name} have left?")
-        params = (a, b)
+        params, expr = (a, b), f"print({a} - {b})"
     elif level == 3:
         a, b = rng.randint(1, 30), rng.randint(1, 30)
         c = rng.randint(1, a + b)
         res = a + b - c
-        ru = (f"У {gen} было {ro(a)}. {P_ru} {ru_verb('buy', g)} ещё {ro(b)}, "
+        ru = (f"У {gen} {had(a)}. {P_ru} {ru_verb('buy', g)} ещё {ro(b)}, "
               f"а потом {ru_verb('give', g)} {ro(c)}. Сколько {ru_o[2]} стало у {gen}?")
         en = (f"{en_name} had {eo(a)}. {P_en} bought {eo(b)} more and then gave away {eo(c)}. "
               f"How many {en_o[1]} does {en_name} have now?")
-        params = (a, b, c)
+        params, expr = (a, b, c), f"print({a} + {b} - {c})"
     elif level == 4:
         n, k = rng.randint(2, 9), rng.randint(2, 9)
         res = n * k
-        ru = (f"У {gen} {n} {ru_plural(n, BOX_RU)}, в каждой по {k} {ru_plural(k, ru_o)}. "
+        ru = (f"У {gen} {n} {ru_plural(n, BOX_RU)}, в каждой по {k} {ru_plural(k, ru_o[:3])}. "
               f"Сколько всего {ru_o[2]} у {gen}?")
         en = (f"{en_name} has {n} {en_plural(n, BOX_EN)} with {eo(k)} in each box. "
               f"How many {en_o[1]} does {en_name} have in total?")
-        params = (n, k)
+        params, expr = (n, k), f"print({n} * {k})"
     else:
         n, k = rng.randint(2, 9), rng.randint(2, 9)
         b = rng.randint(1, 20)
         c = rng.randint(1, n * k + b)
         res = n * k + b - c
-        ru = (f"У {gen} {n} {ru_plural(n, BOX_RU)}, в каждой по {k} {ru_plural(k, ru_o)}. "
+        ru = (f"У {gen} {n} {ru_plural(n, BOX_RU)}, в каждой по {k} {ru_plural(k, ru_o[:3])}. "
               f"{P_ru} {ru_verb('buy', g)} ещё {ro(b)} и {ru_verb('give', g)} {ro(c)}. "
               f"Сколько {ru_o[2]} стало у {gen}?")
         en = (f"{en_name} has {n} {en_plural(n, BOX_EN)} with {eo(k)} in each box. "
               f"{P_en} bought {eo(b)} more and gave away {eo(c)}. "
               f"How many {en_o[1]} does {en_name} have now?")
-        params = (n, k, b, c)
+        params, expr = (n, k, b, c), f"print({n} * {k} + {b} - {c})"
     key = f"word|{level}|{pi}|{oi}|{params}"
-    return key, {"ru": (ru, str(res)), "en": (en, str(res))}, "number", []
+    return key, {"ru": (ru, str(res)), "en": (en, str(res))}, "number", [], expr
 
 
 ORDER_NAMES = [("Аня", "Anna"), ("Боря", "Boris"), ("Витя", "Victor"), ("Галя", "Galina"),
@@ -218,7 +246,7 @@ def gen_order(rng, level):
     ru = " ".join(ru_f) + f" Кто {ru_r[2] if ask_max else ru_r[3]}?"
     en = " ".join(en_f) + f" Who is {en_r[2] if ask_max else en_r[3]}?"
     key = f"order|{level}|{idx}|{ri}|{facts}|{ask_max}"
-    return key, {"ru": (ru, ORDER_NAMES[ans][0]), "en": (en, ORDER_NAMES[ans][1])}, "exact", []
+    return key, {"ru": (ru, ORDER_NAMES[ans][0]), "en": (en, ORDER_NAMES[ans][1])}, "exact", [], None
 
 
 def gen_seq(rng, level):
@@ -246,7 +274,7 @@ def gen_seq(rng, level):
     body = ", ".join(map(str, shown))
     q = {"ru": f"Продолжи ряд: {body}, ...", "en": f"Continue the sequence: {body}, ..."}
     key = f"seq|{level}|{s}"
-    return key, {l: (q[l], str(nxt)) for l in LANGS}, "number", []
+    return key, {l: (q[l], str(nxt)) for l in LANGS}, "number", [], None
 
 
 def _ints(rng, lo=-20, hi=20):
@@ -321,7 +349,7 @@ def gen_code(rng, level):
     ru = f"Напиши на Python функцию f(x), которая {ru_d}."
     en = f"Write a Python function f(x) that {en_d}."
     key = f"code|{level}|{ti}|{k if '{k}' in CODE_TEMPLATES[ti][3] else ''}|{c if '{c}' in CODE_TEMPLATES[ti][3] else ''}"
-    return key, {"ru": (ru, code), "en": (en, code)}, "code", tests
+    return key, {"ru": (ru, code), "en": (en, code)}, "code", tests, None
 
 
 def gen_trace(rng, level):
@@ -340,7 +368,7 @@ def gen_trace(rng, level):
     exec(prog, {"print": lambda v: out.append(str(v))})
     q = {"ru": f"Что выведет программа?\n{prog}", "en": f"What does this program print?\n{prog}"}
     key = f"trace|{level}|{prog}"
-    return key, {l: (q[l], out[0]) for l in LANGS}, "number", []
+    return key, {l: (q[l], out[0]) for l in LANGS}, "number", [], prog
 
 
 GENERATORS = {"math": gen_math, "word": gen_word, "order": gen_order,
@@ -348,9 +376,9 @@ GENERATORS = {"math": gen_math, "word": gen_word, "order": gen_order,
 
 
 def make(domain, lang, level, rng):
-    key, versions, check, tests = GENERATORS[domain](rng, level)
+    key, versions, check, tests, tool = GENERATORS[domain](rng, level)
     q, a = versions[lang]
-    return Task(domain, lang, level, q, a, key, check, tests)
+    return Task(domain, lang, level, q, a, key, check, tests, tool)
 
 
 def train_stream(seed, levels=TRAIN_LEVELS, domains=DOMAINS):
@@ -359,12 +387,12 @@ def train_stream(seed, levels=TRAIN_LEVELS, domains=DOMAINS):
     while True:
         domain = rng.choice(domains)
         level = rng.choice(levels)
-        key, versions, check, tests = GENERATORS[domain](rng, level)
+        key, versions, check, tests, tool = GENERATORS[domain](rng, level)
         if is_test_key(key):
             continue
         lang = rng.choice(LANGS)
         q, a = versions[lang]
-        yield Task(domain, lang, level, q, a, key, check, tests)
+        yield Task(domain, lang, level, q, a, key, check, tests, tool)
 
 
 def test_set(n_per_cell=20, seed=12345, domains=DOMAINS, levels=ALL_LEVELS):
@@ -376,13 +404,13 @@ def test_set(n_per_cell=20, seed=12345, domains=DOMAINS, levels=ALL_LEVELS):
             seen, tries = set(), 0
             while len(seen) < n_per_cell and tries < 20000:
                 tries += 1
-                key, versions, check, tests = GENERATORS[domain](rng, level)
+                key, versions, check, tests, tool = GENERATORS[domain](rng, level)
                 if key in seen or not (is_test_key(key) or level == 5):
                     continue
                 seen.add(key)
                 for lang in LANGS:
                     q, a = versions[lang]
-                    tasks.append(Task(domain, lang, level, q, a, key, check, tests))
+                    tasks.append(Task(domain, lang, level, q, a, key, check, tests, tool))
     return tasks
 
 

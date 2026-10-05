@@ -45,6 +45,7 @@ def main():
     ap.add_argument("--d_main", type=int, default=320)
     ap.add_argument("--d_byte", type=int, default=192)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--tools", type=float, default=0.0, help="доля демонстраций с инструментом")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
 
@@ -54,7 +55,7 @@ def main():
     os.makedirs(out, exist_ok=True)
     cfg = Config(chunking=args.chunking, r_train_max=args.r_max, d_main=args.d_main, d_byte=args.d_byte)
     model = Tkan(cfg).to(args.device)
-    mix = Mixture(args.seq, seed=args.seed)
+    mix = Mixture(args.seq, seed=args.seed, tool_prob=args.tools)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9, 0.95), weight_decay=0.1)
     print(f"параметров: {model.n_params() / 1e6:.2f}M, нарезка: {cfg.chunking}", flush=True)
 
@@ -88,7 +89,7 @@ def main():
             print(json.dumps(rec, ensure_ascii=False), flush=True)
             log.write(json.dumps(rec) + "\n")
             log.flush()
-    torch.save({"cfg": cfg.__dict__, "model": model.state_dict(), "step": step, "bytes": seen},
+    torch.save({"cfg": cfg.__dict__, "model": model.state_dict(), "step": step, "bytes": seen, "args": vars(args)},
                os.path.join(out, "model.pt"))
     final = {"step": step, "bytes": seen, "minutes": (time.time() - t0) / 60, "params": model.n_params()}
     for name in ("wiki_ru", "wiki_en", "code"):

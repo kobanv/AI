@@ -56,6 +56,8 @@ def extract(task, out):
             out = out.split(stop)[0]
         return out.rstrip()
     out = out.split("\n\n")[0]
+    if "</out>" in out:                       # ответ после работы инструмента
+        out = out.rsplit("</out>", 1)[1]
     if task.check == "code":
         return out.strip("\n").lstrip(" ")
     return out.strip().split("\n")[0].strip()

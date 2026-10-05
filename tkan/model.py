@@ -232,8 +232,9 @@ class Tkan(nn.Module):
 
     # ------------------------------------------------------------ генерация
     @torch.no_grad()
-    def generate(self, prompt: bytes, max_new=32, r=None, stop=b"\n\n"):
+    def generate(self, prompt: bytes, max_new=32, r=None, stop=(b"\n\n",)):
         """Жадная генерация байт за байтом. Возвращает (байты, вероятность ответа)."""
+        stop = (stop,) if isinstance(stop, bytes) else stop
         self.eval()
         seq = list(prompt)
         out, logp = [], 0.0
@@ -246,6 +247,6 @@ class Tkan(nn.Module):
             logp += float(lp[nxt])
             seq.append(nxt)
             out.append(nxt)
-            if bytes(out[-len(stop):]) == stop:
+            if any(bytes(out[-len(st):]) == st for st in stop):
                 break
         return bytes(out), math.exp(logp)
