@@ -15,6 +15,7 @@
 
 python -m tkan.transplant eye   --minutes 90
 python -m tkan.transplant voice --minutes 60
+python -m tkan.transplant voice --eye_thoughts --minutes 60   (этап 2 голоса)
 python -m tkan.transplant eval
 """
 import argparse
@@ -261,15 +262,28 @@ def train_voice(args):
     torch.set_num_threads(args.threads)
     teacher = Teacher()
     voice = Voice(teacher.d).to(DEV)
-    mix = Mixture(512, seed=12)
+    eye = None
+    if args.eye_thoughts:
+        # этап 2: голос учится на мыслях ядра, читавшего через НАШ глаз (как в работе), продолжая этап 1
+        eye = Eye(teacher.d).to(DEV).eval()
+        eye.load_state_dict(torch.load(os.path.join(OUT, "eye.pt"), map_location=DEV))
+        voice.load_state_dict(torch.load(os.path.join(OUT, "voice.pt"), map_location=DEV))
+        torch.save(voice.state_dict(), os.path.join(OUT, "voice_stage1.pt"))
+    mix = Mixture(512, seed=12 + 100 * bool(args.eye_thoughts))
     gen = samples(mix, teacher)
     opt = torch.optim.AdamW(voice.parameters(), lr=args.lr, weight_decay=0.0)
-    t0, step, log = time.time(), 0, open(os.path.join(OUT, "voice_log.jsonl"), "w")
+    t0, step = time.time(), 0
+    log = open(os.path.join(OUT, "voice2_log.jsonl" if eye is not None else "voice_log.jsonl"), "w")
     while time.time() - t0 < args.minutes * 60:
         rows = [next(gen) for _ in range(args.bsz)]
         H, pieces = [], []
-        for ids, _, _ in rows:          # мысль ядра в позиции j предсказывает кусок j+1
-            h = teacher.core(teacher.E[torch.tensor(ids, device=DEV)][None])[0]
+        for ids, b, ends in rows:       # мысль ядра в позиции j предсказывает кусок j+1
+            if eye is not None:
+                with torch.no_grad():
+                    inp = eye.out(eye(torch.tensor([list(b)], device=DEV))[0, ends])
+            else:
+                inp = teacher.E[torch.tensor(ids, device=DEV)]
+            h = teacher.core(inp[None])[0]
             H.append(h[:-1])
             pieces += [teacher.token_bytes(i) for i in ids[1:]]
         H = torch.cat(H)
@@ -434,6 +448,7 @@ def main():
     ap.add_argument("--lr", type=float, default=2e-3)
     ap.add_argument("--threads", type=int, default=2)
     ap.add_argument("--n", type=int, default=10)
+    ap.add_argument("--eye_thoughts", action="store_true", help="этап 2: голос учится на мыслях через наш глаз")
     args = ap.parse_args()
     {"eye": train_eye, "voice": train_voice, "eval": evaluate, "exam": exam}[args.stage](args)
 
