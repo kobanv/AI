@@ -25,3 +25,14 @@
 - На видеокарте Google: [открыть в Colab](https://colab.research.google.com/github/kobanv/AI/blob/claude/fervent-clarke-fj1c4y/notebooks/tkan_colab.ipynb)
 - Локально: `python -m tkan.download --teacher`, затем `tkan.train`, `tkan.evaluate`, `tkan.selfimprove`, `tkan.transplant`
 - `tools/budget.py` — расчёт бюджета вычислений и памяти
+
+## Происхождение ядра «Ткани-Т»
+
+Ядро «Ткани-Т» — это слои трансформера **Qwen3-0.6B** (Alibaba Qwen, лицензия Apache-2.0), без изменений и замороженные.
+Веса в репозитории не хранятся: их скачивает `python -m tkan.download --teacher` вместе с файлом LICENSE.
+
+Наши собственные органы:
+- «глаз», голова границ и «голос» — байтовые вход и выход вместо токенайзера Qwen;
+- экзамен, цикл саморазвития, «руки» и память.
+
+Знания (факты, язык, умение рассуждать) пока целиком принадлежат пересаженному ядру.
