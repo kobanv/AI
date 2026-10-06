@@ -1,0 +1,29 @@
+{
+ "layer": 16,
+ "outputs": 3726336,
+ "certified_by_k_strict": {
+  "0": 0.0,
+  "1": 0.0,
+  "2": 0.0,
+  "3": 0.0,
+  "4": 0.0,
+  "5": 0.0,
+  "6": 0.0,
+  "7": 0.30570029111706515
+ },
+ "certified_by_k_ideal": {
+  "0": 0.0,
+  "1": 0.0,
+  "2": 0.0,
+  "3": 0.0,
+  "4": 0.0,
+  "5": 0.0,
+  "6": 0.0,
+  "7": 1.0
+ },
+ "mean_bits_per_weight_strict": 16.0,
+ "mean_bits_per_weight_ideal": 16.0,
+ "bitwise_mismatch_of_certified": 0,
+ "certified_checked": 1139142,
+ "check_time_over_matmul": 48.20428211586902
+}
