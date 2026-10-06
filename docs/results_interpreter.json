@@ -1,0 +1,172 @@
+{
+ "span": [
+  12,
+  16
+ ],
+ "moe_params": 377733120,
+ "moe_active_macs": 75497472,
+ "original": {
+  "span_rel_err": 0.0,
+  "kl_per_token": 0.0,
+  "top1_agree": 1.0,
+  "bits_per_token": 2.9549405663565946,
+  "bits_per_token_original": 2.9549405663565946,
+  "exam_ru": 0.6166666666666667,
+  "exam_en": 0.7833333333333333,
+  "exam_by_domain": {
+   "math": 0.8500000000000001,
+   "word": 0.8,
+   "order": 0.5,
+   "seq": 0.75,
+   "code": 0.95,
+   "trace": 0.35
+  },
+  "samples": {
+   "Москва — это": " город, который впервые стал главным центром власти в России в 1647 году.",
+   "The theory of evolution": " by natural selection is a fundamental concept in biology, first proposed by Charles Darwin in his book \"On the Origin of Species\" in 1859. It suggests that species",
+   "def quicksort(arr):": "\n    if len(arr) <= 1:\n        return arr\n    pivot = arr[len(arr) // 2]\n    left = [x for x in arr if x < pivot]"
+  }
+ },
+ "removed": {
+  "span_rel_err": 0.9627391447623571,
+  "kl_per_token": 0.32279018747309846,
+  "top1_agree": 0.7701822916666666,
+  "bits_per_token": 3.199791672350163,
+  "bits_per_token_original": 2.9549405663565946
+ },
+ "indep_1024_k1": {
+  "span_rel_err": 0.07288705091923475,
+  "kl_per_token": 0.16007193573750556,
+  "top1_agree": 0.8408203125,
+  "bits_per_token": 3.044094393634895,
+  "bits_per_token_original": 2.9549405663565946,
+  "exam_ru": 0.6,
+  "exam_en": 0.6833333333333333,
+  "exam_by_domain": {
+   "math": 0.7,
+   "word": 0.8,
+   "order": 0.4,
+   "seq": 0.6499999999999999,
+   "code": 0.95,
+   "trace": 0.35
+  },
+  "samples": {
+   "Москва — это": " город, который включает в себя средневосточный регион, включая в себя средневосточный р",
+   "The theory of evolution": " by natural selection is a fundamental concept in biology, which posits that organisms evolve over time through a process of natural selection. This theory suggests that certain traits or characteristics of an organism",
+   "def quicksort(arr):": "\n    if len(arr) <= 1:\n        return arr\n    pivot = len(arr) // 2\n    left = quicksort(arr[:pivot])\n    right = quicksort(arr"
+  },
+  "unique_params": 18874368,
+  "code_params": 16388,
+  "compression_vs_moe": 20.013020833333332,
+  "macs_per_token": 18874368,
+  "train_minutes": 2.3419060905774436
+ },
+ "shared_4096_k1": {
+  "span_rel_err": 0.0797576941549778,
+  "kl_per_token": 0.17177221598103642,
+  "top1_agree": 0.8362630208333334,
+  "bits_per_token": 3.067614318458333,
+  "bits_per_token_original": 2.9549405663565946,
+  "exam_ru": 0.6166666666666667,
+  "exam_en": 0.7666666666666667,
+  "exam_by_domain": {
+   "math": 0.8500000000000001,
+   "word": 0.8,
+   "order": 0.44999999999999996,
+   "seq": 0.8,
+   "code": 0.9,
+   "trace": 0.35
+  },
+  "samples": {
+   "Москва — это": " город, который впервые в 1992 году стал городом России.\n\nВ 1992 г",
+   "The theory of evolution": " is a complex and multifaceted subject that has been studied and debated for centuries. It encompasses various disciplines, including biology, genetics, and",
+   "def quicksort(arr):": "\n    if len(arr) <= 1:\n        return arr\n    pivot = len(arr) // 2\n    left = pivot - 1\n    right = pivot + 1\n    return quick"
+  },
+  "unique_params": 18874368,
+  "code_params": 28676,
+  "compression_vs_moe": 20.013020833333332,
+  "macs_per_token": 75497472,
+  "train_minutes": 4.21453320980072
+ },
+ "shared_4096_k2": {
+  "span_rel_err": 0.08738924500842889,
+  "kl_per_token": 0.1950622871518135,
+  "top1_agree": 0.8196614583333334,
+  "bits_per_token": 3.075940734365397,
+  "bits_per_token_original": 2.9549405663565946,
+  "exam_ru": 0.5666666666666667,
+  "exam_en": 0.6833333333333333,
+  "exam_by_domain": {
+   "math": 0.8500000000000001,
+   "word": 0.75,
+   "order": 0.4,
+   "seq": 0.6,
+   "code": 0.8500000000000001,
+   "trace": 0.3
+  },
+  "samples": {
+   "Москва — это": " город, который включает в себя несколько крупных городских районов, включая в себя так",
+   "The theory of evolution": " is a fundamental concept in biology, and it is a cornerstone of the scientific method. It is a process that explains how species evolve over time, driven by natural selection and genetic variation",
+   "def quicksort(arr):": "\n    if len(arr) <= 1:\n        return arr\n    else:\n        pivot = quicksort(arr[0:len(arr)//2])\n        return [pivot] + quicksort"
+  },
+  "unique_params": 18874368,
+  "code_params": 57348,
+  "compression_vs_moe": 20.013020833333332,
+  "macs_per_token": 150994944,
+  "train_minutes": 7.693646037578583
+ },
+ "shared_4096_k4": {
+  "span_rel_err": 0.09297647435838978,
+  "kl_per_token": 0.20807517133653164,
+  "top1_agree": 0.8147786458333334,
+  "bits_per_token": 3.0772057972165245,
+  "bits_per_token_original": 2.9549405663565946,
+  "exam_ru": 0.5666666666666667,
+  "exam_en": 0.6333333333333333,
+  "exam_by_domain": {
+   "math": 0.75,
+   "word": 0.75,
+   "order": 0.44999999999999996,
+   "seq": 0.55,
+   "code": 0.9,
+   "trace": 0.2
+  },
+  "samples": {
+   "Москва — это": " город, который включает в состав многих других городов, включая в состав город Москвы, а так",
+   "The theory of evolution": " by natural selection is a fundamental concept in biology, which explains how species evolve over time through the process of natural selection. This theory suggests that species adapt to their environment and pass on advantageous",
+   "def quicksort(arr):": "\n    if len(arr) <= 1:\n        return arr\n    pivot = arr[0]\n    left = quicksort(arr[1:])\n    right = quicksort(arr[1:])"
+  },
+  "unique_params": 18874368,
+  "code_params": 114692,
+  "compression_vs_moe": 20.013020833333332,
+  "macs_per_token": 301989888,
+  "train_minutes": 13.499779097239177
+ },
+ "shared_2048_k4": {
+  "span_rel_err": 0.08885254943743348,
+  "kl_per_token": 0.19444605273505053,
+  "top1_agree": 0.818359375,
+  "bits_per_token": 3.073325009151203,
+  "bits_per_token_original": 2.9549405663565946,
+  "exam_ru": 0.65,
+  "exam_en": 0.6,
+  "exam_by_domain": {
+   "math": 0.75,
+   "word": 0.8,
+   "order": 0.4,
+   "seq": 0.6499999999999999,
+   "code": 0.8500000000000001,
+   "trace": 0.3
+  },
+  "samples": {
+   "Москва — это": " город, который включает в себя множество культурных и исторических достопримечательностей, которые м",
+   "The theory of evolution": " is a complex and multifaceted subject that has been debated for centuries. It involves the study of the development of life on Earth, from the earliest single-celled",
+   "def quicksort(arr):": "\n    if len(arr) <= 1:\n        return arr\n    else:\n        pivot = arr[0]\n        left = arr[1:]\n        right = arr[0]\n        pivot_"
+  },
+  "unique_params": 9437184,
+  "code_params": 81924,
+  "compression_vs_moe": 40.026041666666664,
+  "macs_per_token": 150994944,
+  "train_minutes": 7.746685953934987
+ }
+}
