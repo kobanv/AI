@@ -88,8 +88,10 @@ def collect(model, seqs, a, b, keep_logits=False):
     hooks = []
     for l in range(a, b):
         moe = model.model.layers[l].block_sparse_moe
-        hooks.append(moe.register_forward_hook(
-            lambda m, inp, out, l=l: (caps["u"].append((l, inp[0][0].clone())), caps["f"].append((l, out[0].clone())))))
+        def hook(m, inp, out, l=l):          # ничего не возвращает: выход блока не подменяется
+            caps["u"].append((l, inp[0][0].clone()))
+            caps["f"].append((l, out[0].clone()))
+        hooks.append(moe.register_forward_hook(hook))
     data = []
     for _, ids in seqs:
         caps["u"].clear(), caps["f"].clear()
