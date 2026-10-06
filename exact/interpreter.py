@@ -128,20 +128,21 @@ def restore(model, saved, a):
 
 
 # ---------------------------------------------------------------- обучение
-def train(model, ex, train_data, a, b, local_steps, loop_steps, bsz_rows, bsz_seq, lr, log):
+def train(model, ex, train_data, a, b, local_steps, loop_steps, bsz_rows, bsz_seq, lr, log, init_scale=True):
     opt = torch.optim.AdamW(ex.parameters(), lr=lr, weight_decay=0.0)
     n_l = b - a
     U = torch.cat([d["u"] for d in train_data], 1).float()          # (n_l, N, d)
     Fo = torch.cat([d["f"] for d in train_data], 1).float()
     fnorm = Fo.pow(2).mean((1, 2))                                    # (n_l,)
-    with torch.no_grad():                                             # масштаб выхода — по эталону
-        ex.scale.copy_(Fo.pow(2).mean((1, 2)).sqrt())
+    if init_scale:
+        with torch.no_grad():                                         # масштаб выхода — по эталону
+            ex.scale.copy_(Fo.pow(2).mean((1, 2)).sqrt())
     t0 = time.time()
     total = local_steps + loop_steps
     for step in range(total):
         for g in opt.param_groups:
             g["lr"] = lr * min(1, (step + 1) / 30) * 0.5 * (1 + math.cos(math.pi * step / total))
-        if step == local_steps:
+        if step == local_steps and loop_steps:
             saved = install(model, ex, a, b)                          # дальше участок считает исполнитель
         if step < local_steps:                                        # 1. локально, на идеальных входах
             idx = torch.randint(0, U.shape[1], (bsz_rows,))
